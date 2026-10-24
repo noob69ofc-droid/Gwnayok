@@ -572,7 +572,6 @@
                         
                         <div class="fc-actions">
                             <button class="btn btn-primary" onclick="editMatch('${key}')"><i class="fas fa-cog"></i> Manage</button>
-                            <button class="btn btn-primary" onclick="viewMatchHistory('${key}', '${String(m.title || '').replace(/'/g, "\\'")}')"><i class="fas fa-history"></i> History</button>
                             <button class="btn btn-danger" onclick="deleteMatch('${key}')"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>`;
@@ -714,47 +713,6 @@
                 Swal.fire({icon: 'success', title: 'Updated', timer: 1500, showConfirmButton: false});
             }
         }
-
-        // --- MATCH HISTORY / BOOKED PLAYERS ---
-        window.viewMatchHistory = async (matchKey, matchTitle) => {
-            const list = document.getElementById('match-history-list');
-            try {
-                const [partsSnap, usersSnap] = await Promise.all([
-                    get(ref(db, `match_participants/${matchKey}`)),
-                    get(ref(db, 'users'))
-                ]);
-                const parts = partsSnap.val() || {};
-                const users = usersSnap.val() || {};
-                const rows = Object.entries(parts).map(([id, p]) => {
-                    const uid = p.uid || p.joinedBy || '';
-                    const account = users[uid] || {};
-                    return {
-                        ign: p.ign || p.username || 'Unknown',
-                        email: p.email || account.email || 'Not recorded for this booking',
-                        uid,
-                        slot: p.slot || '—',
-                        joinedAt: p.joinedAt ? new Date(Number(p.joinedAt)).toLocaleString() : (p.date || '—'),
-                        kills: Number(p.kills || 0),
-                        id
-                    };
-                });
-                const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-                const html = rows.length ? `
-                    <div style="max-height:65vh;overflow:auto">
-                    <div style="margin-bottom:12px;color:var(--text-muted)">Players: ${rows.length}</div>
-                    ${rows.map((p, i) => `<div class="flat-card">
-                        <div class="fc-header"><div class="fc-title">${i+1}. ${esc(p.ign)}</div><div class="fc-tag tag-blue">Slot ${esc(p.slot)}</div></div>
-                        <div class="fc-detail"><span>Email:</span> <span class="fc-value" style="overflow-wrap:anywhere">${esc(p.email)}</span></div>
-                        <div class="fc-detail"><span>UID:</span> <span class="fc-value">${esc(p.uid || '—')}</span></div>
-                        <div class="fc-detail"><span>Joined:</span> <span class="fc-value">${esc(p.joinedAt)}</span></div>
-                        <div class="fc-detail"><span>Kills:</span> <span class="fc-value">${p.kills}</span></div>
-                    </div>`).join('')}
-                    </div>` : '<div style="padding:24px;text-align:center;color:var(--text-muted)">No player bookings recorded for this match yet.</div>';
-                await Swal.fire({title: `Match History: ${esc(matchTitle)}`, html, width: 700, confirmButtonText: 'Close', confirmButtonColor: '#7C4DFF'});
-            } catch (err) {
-                Swal.fire('Unable to load history', err.message || 'Please check database permissions.', 'error');
-            }
-        };
 
         // --- USERS ---
         function renderUsers(users) {
