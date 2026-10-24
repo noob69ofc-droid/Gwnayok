@@ -1842,14 +1842,10 @@
                 <div class="join-badge" id="join-page-type">Solo</div>
             </div>
             
-            <div style="margin:16px 0">
-                <div style="font-weight:800;margin-bottom:8px">Select Slot(s)</div>
-                <div id="join-slot-help" style="font-size:12px;color:#94a3b8;margin-bottom:10px">Choose your available slot(s)</div>
-                <div id="join-slots-container" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px"></div>
-            </div>
-            <div class="join-inputs" id="join-inputs-container">
-                <!-- Inputs generated via JS -->
-            </div>
+            <div style="margin:18px 0 8px;font-weight:800;color:#111">Select Slot(s)</div>
+            <div id="join-slot-help" style="font-size:13px;color:#94a3b8;margin-bottom:10px">Choose your available slot(s)</div>
+            <div id="join-slots-container" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:18px"></div>
+            <div class="join-inputs" id="join-inputs-container"><!-- Player names generated from selected slots --></div>
         </div>
         
         <button class="join-btn-full" onclick="window.confirmJoin()">Join Now!</button>
@@ -2197,7 +2193,7 @@
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, set, onValue, push, update, get, remove, runTransaction, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getDatabase, ref, set, onValue, push, update, get, serverTimestamp, runTransaction, remove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
     import { getAuth, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
     const firebaseConfig = {
@@ -2221,13 +2217,14 @@
     let rawMatches = [];
     let currentActiveCategory = null;
     let userJoinedMatches = []; // Stores dbKeys of joined matches
-    let currentJoinId = null, currentEntryFee = 0, currentSlotCount = 1, selectedJoinSlots = [];
+    let currentJoinId = null, currentEntryFee = 0, currentSlotCount = 1, currentTotalSlots = 48, selectedJoinSlots = [], currentJoinMatch = null;
     let videoLinks = { addMoney:'', getRoom:'', howPlay:'' };
     let currentMatchFilter = 'Upcoming';
     let supportLink = "";
     let shopLink = "";
     let currentPayMethod = 'bkash';
     let allParticipants = {};
+    let allReservedSlots = {};
 
     // Expose functions to window
     window.verifyAutoPay = verifyAutoPay;
@@ -2302,6 +2299,11 @@
             const d = s.val();
             allParticipants = d || {}; 
             calculateJoinedMatches();
+            if(currentJoinId && document.getElementById('join-match-view').classList.contains('active')) renderJoinSlots();
+        });
+        onValue(ref(db, 'match_slots'), s => {
+            allReservedSlots = s.val() || {};
+            if(currentJoinId && document.getElementById('join-match-view').classList.contains('active')) renderJoinSlots();
         });
         
         onValue(ref(db, 'app_settings'), s => {
@@ -2767,89 +2769,80 @@
          }
     }
 
-    function renderJoinSlots(totalSlots) {
-        const host = document.getElementById('join-slots-container');
-        if (!host) return;
-        const used = new Set();
-        const parts = allParticipants[currentJoinId] || {};
-        Object.values(parts).forEach((p, idx) => {
-            if (Number.isInteger(Number(p.slot)) && Number(p.slot) > 0) used.add(Number(p.slot));
-            else used.add(idx + 1); // Reserve legacy bookings that have no saved slot number.
-        });
-        selectedJoinSlots = [];
-        host.innerHTML = '';
-        for (let n = 1; n <= totalSlots; n++) {
-            const taken = used.has(n);
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.textContent = String(n);
-            b.className = 'seat ' + (taken ? 'taken' : 'open');
-            b.disabled = taken;
-            b.style.minHeight = '48px';
-            b.style.fontSize = '15px';
-            b.setAttribute('aria-label', `Slot ${n}${taken ? ' booked' : ' available'}`);
-            b.onclick = () => {
-                if (selectedJoinSlots.includes(n)) {
-                    selectedJoinSlots = selectedJoinSlots.filter(x => x !== n);
-                } else if (selectedJoinSlots.length < currentSlotCount) {
-                    selectedJoinSlots.push(n);
-                } else {
-                    return Swal.fire('Slot limit', `Select only ${currentSlotCount} slot(s).`, 'info');
-                }
-                selectedJoinSlots.sort((a,b) => a-b);
-                host.querySelectorAll('button').forEach(btn => {
-                    const num = Number(btn.textContent);
-                    if (!btn.disabled) {
-                        btn.classList.toggle('mine', selectedJoinSlots.includes(num));
-                        btn.style.borderColor = selectedJoinSlots.includes(num) ? '#ff1744' : '';
-                        btn.style.background = selectedJoinSlots.includes(num) ? '#7f1d1d' : '';
-                    }
-                });
-                const help = document.getElementById('join-slot-help');
-                if (help) help.textContent = `Selected ${selectedJoinSlots.length}/${currentSlotCount} slot(s): ${selectedJoinSlots.join(', ') || 'none'}`;
-            };
-            host.appendChild(b);
-        }
-        const help = document.getElementById('join-slot-help');
-        if (help) help.textContent = `Select ${currentSlotCount} available slot(s).`;
-    }
-
     function prepJoin(id, type, fee, key, title) {
          if(!currentUser) return;
-         
-         // Use the passed ID (which is now dbKey) to check
          if(userJoinedMatches.includes(id)) {
              Swal.fire({ icon:'warning', title:'Already Joined', text:'You have already joined this match!' });
              return;
          }
-         currentJoinId = id; // This is now dbKey
-         currentEntryFee = fee;
-         
-         // Setup Full Page Join UI
-         document.getElementById('join-page-title').innerText = title || "Match Joining";
-         document.getElementById('join-page-meta').innerText = new Date().toLocaleDateString(); 
-         document.getElementById('join-page-win').innerText = "???"; 
-         document.getElementById('join-page-fee').innerText = fee;
-         document.getElementById('join-page-type').innerText = type;
+         currentJoinId = id;
+         currentEntryFee = Number(fee) || 0;
+         currentJoinMatch = rawMatches.find(m => m.dbKey === id) || {};
+         const normalizedType = String(type || currentJoinMatch.type || 'Solo').toLowerCase();
+         currentSlotCount = normalizedType.includes('squad') ? 4 : (normalizedType.includes('duo') ? 2 : 1);
+         currentTotalSlots = Math.max(currentSlotCount, Number(currentJoinMatch.total) || 48);
+         selectedJoinSlots = [];
 
-         let slots = 1;
-         if(type && type.toLowerCase().includes('duo')) slots = 2;
-         if(type && type.toLowerCase().includes('squad')) slots = 4;
-         
-         const ic = document.getElementById('join-inputs-container');
-         ic.innerHTML = "";
-         for(let i=1; i<=slots; i++) {
-             ic.innerHTML += `<input type="text" class="join-input p-name" placeholder="Player ${i} Name (Game ID)">`;
-         }
-         
-         // Store Key for Confirm (redundant but safe)
-         document.querySelector('.join-btn-full').dataset.key = key;
-
-         // Show View
+         document.getElementById('join-page-title').innerText = title || currentJoinMatch.title || 'Match Joining';
+         document.getElementById('join-page-meta').innerText = [currentJoinMatch.time, currentJoinMatch.map].filter(Boolean).join(' • ');
+         document.getElementById('join-page-win').innerText = currentJoinMatch.total_prize ?? '—';
+         document.getElementById('join-page-fee').innerText = currentEntryFee;
+         document.getElementById('join-page-type').innerText = type || currentJoinMatch.type || 'Solo';
+         renderJoinSlots();
+         renderJoinPlayerInputs();
+         document.querySelector('.join-btn-full').dataset.key = key || id;
          document.querySelectorAll('.app-section').forEach(e => e.classList.remove('active'));
          document.body.classList.add('sub-page');
          document.querySelector('.tab-bar').classList.add('hidden');
          document.getElementById('join-match-view').classList.add('active');
+    }
+
+    function renderJoinSlots() {
+        const container = document.getElementById('join-slots-container');
+        const help = document.getElementById('join-slot-help');
+        if(!container) return;
+        const participants = Object.values(allParticipants[currentJoinId] || {});
+        const reservations = allReservedSlots[currentJoinId] || {};
+        const occupied = new Set([
+            ...participants.map(p => Number(p.slotNo)).filter(n => Number.isFinite(n) && n > 0),
+            ...Object.keys(reservations).map(Number).filter(n => Number.isFinite(n) && n > 0)
+        ]);
+        // Legacy participant records may not have slotNo; count those as occupied seats to avoid overbooking.
+        const legacyCount = participants.filter(p => !p.slotNo).length;
+        for(let n=1; n<=legacyCount; n++) occupied.add(n);
+        container.innerHTML = '';
+        for(let n=1; n<=currentTotalSlots; n++) {
+            const taken = occupied.has(n);
+            const selected = selectedJoinSlots.includes(n);
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = String(n);
+            b.disabled = taken;
+            b.setAttribute('aria-label', `Slot ${n}${taken ? ', booked' : selected ? ', selected' : ', available'}`);
+            b.style.cssText = `min-height:48px;border-radius:10px;border:1px solid ${taken ? '#ef4444' : selected ? '#5E35B1' : '#d1d5db'};background:${taken ? '#fee2e2' : selected ? '#5E35B1' : '#fff'};color:${taken ? '#991b1b' : selected ? '#fff' : '#111827'};font-weight:800;opacity:${taken ? '.65' : '1'};cursor:${taken ? 'not-allowed' : 'pointer'};`;
+            if(taken) b.innerHTML = `${n}<div style="font-size:9px;font-weight:600">BOOKED</div>`;
+            b.onclick = () => {
+                if(taken) return;
+                if(selectedJoinSlots.includes(n)) selectedJoinSlots = selectedJoinSlots.filter(x => x !== n);
+                else if(selectedJoinSlots.length < currentSlotCount) selectedJoinSlots.push(n);
+                else return Swal.fire({icon:'info',title:'Slot limit',text:`For ${document.getElementById('join-page-type').innerText}, select ${currentSlotCount} slot(s).`});
+                selectedJoinSlots.sort((a,b)=>a-b);
+                renderJoinSlots();
+                renderJoinPlayerInputs();
+            };
+            container.appendChild(b);
+        }
+        help.textContent = `Choose ${currentSlotCount} available slot(s). ${selectedJoinSlots.length}/${currentSlotCount} selected. Red slots are booked.`;
+    }
+
+    function renderJoinPlayerInputs() {
+        const ic = document.getElementById('join-inputs-container');
+        if(!ic) return;
+        if(!selectedJoinSlots.length) {
+            ic.innerHTML = '<div style="color:#94a3b8;font-size:13px;padding:8px 0">Select slot(s) above to enter player name(s).</div>';
+            return;
+        }
+        ic.innerHTML = selectedJoinSlots.map((slot,i) => `<label style="display:block;font-size:12px;font-weight:700;color:#555;margin:8px 0 4px">Slot ${slot} — Player ${i+1}</label><input type="text" class="join-input p-name" data-slot="${slot}" placeholder="Player ${i+1} Name (Game ID)" autocomplete="off">`).join('');
     }
 
     function closeJoinPage() {
@@ -2864,98 +2857,60 @@
     }
 
     async function confirmJoin() {
-         // Double check if already joined to prevent duplicates
-         if(userJoinedMatches.includes(currentJoinId)) {
-             toggleLoader(false);
-             return Swal.fire({ icon:'warning', title:'Already Joined', text:'You have already joined this match!' });
-         }
-         
-         // Double Check AllParticipants (in case of async lag)
-         if(allParticipants[currentJoinId]) {
-             const existing = Object.values(allParticipants[currentJoinId]).find(p => p.joinedBy === currentUser.uid);
-             if(existing) {
-                 return Swal.fire({ icon:'warning', title:'Already Joined', text:'You are already in this match list!' });
-             }
-         }
-
-         const inps = document.querySelectorAll('.p-name');
-         let count = 0;
-         let names = [];
-         inps.forEach(i => { if(i.value.trim()) { count++; names.push(i.value.trim()); } });
-         if(count !== inps.length) return Swal.fire('Error', "Fill all names", 'error');
-         if (selectedJoinSlots.length !== currentSlotCount) {
-             return Swal.fire('Select slots', `Please select ${currentSlotCount} available slot(s).`, 'warning');
-         }
-         
-         const total = currentEntryFee * count;
-         if((depositBal + winningBal) < total) return Swal.fire('Error', "Insufficient Balance", 'error');
-         
-         const key = document.querySelector('.join-btn-full').dataset.key; // dbKey
-         let d = depositBal, w = winningBal;
-         let rem = total;
-         if(d >= rem) { d -= rem; rem = 0; }
-         else { rem -= d; d = 0; w -= rem; }
-         
+         if(!currentUser) return Swal.fire('Error','Please sign in first.','error');
+         if(!currentJoinId) return Swal.fire('Error','Please select a match first.','error');
+         if(userJoinedMatches.includes(currentJoinId)) return Swal.fire({ icon:'warning', title:'Already Joined', text:'You have already joined this match!' });
+         if(selectedJoinSlots.length !== currentSlotCount) return Swal.fire('Select slots', `Please select ${currentSlotCount} available slot(s).`, 'warning');
+         const inputs = Array.from(document.querySelectorAll('.p-name'));
+         if(inputs.length !== currentSlotCount || inputs.some(i => !i.value.trim())) return Swal.fire('Error','Fill all selected player names.','error');
+         const names = inputs.map(i => ({ign:i.value.trim(),slotNo:Number(i.dataset.slot)}));
+         const total = currentEntryFee * names.length;
+         if((depositBal + winningBal) < total) return Swal.fire('Error','Insufficient Balance','error');
+         const key = document.querySelector('.join-btn-full').dataset.key || currentJoinId;
+         let d = depositBal, w = winningBal, rem = total;
+         if(d >= rem) { d -= rem; rem = 0; } else { rem -= d; d = 0; w -= rem; }
          toggleLoader(true);
+         const reserved = [];
          try {
-             await update(ref(db, 'users/'+currentUser.uid), {deposit:d, winning:w});
-             
-             // Atomically reserve slots and store the player's email for admin history.
-             const participantsRef = ref(db, 'match_participants/' + currentJoinId);
-             const participantKeys = names.map(() => push(participantsRef).key);
-             const bookingId = `${currentUser.uid}_${currentJoinId}_${Date.now()}`;
-             const bookingTx = await runTransaction(participantsRef, current => {
-                 current = current || {};
-                 const taken = new Set();
-                 Object.values(current).forEach((p, idx) => {
-                     if (p && Number.isInteger(Number(p.slot)) && Number(p.slot) > 0) taken.add(Number(p.slot));
-                     else taken.add(idx + 1);
-                 });
-                 if (selectedJoinSlots.some(slot => taken.has(slot))) return;
-                 names.forEach((name, i) => {
-                     current[participantKeys[i]] = {
-                         ign: name, joinedBy: currentUser.uid, uid: currentUser.uid,
-                         email: currentUser.email || '', slot: selectedJoinSlots[i], bookingId,
-                         kills: 0, win: 0, joinedAt: Date.now()
-                     };
-                 });
-                 return current;
-             });
-             if (!bookingTx.committed) {
-                 await update(ref(db, 'users/' + currentUser.uid), {deposit: depositBal, winning: winningBal});
-                 throw new Error('A selected slot was just booked. Please select another slot.');
+             // Atomically reserve each slot so two users cannot claim the same seat at the same time.
+             for(const item of names) {
+                 const slotRef = ref(db, `match_slots/${currentJoinId}/${item.slotNo}`);
+                 const result = await runTransaction(slotRef, current => current === null ? {
+                     uid: currentUser.uid, email: currentUser.email || '', ign: item.ign, slotNo: item.slotNo, reservedAt: Date.now()
+                 } : undefined, {applyLocally:false});
+                 if(!result.committed) throw new Error(`Slot ${item.slotNo} has just been booked. Please choose another slot.`);
+                 reserved.push(item.slotNo);
              }
-             
-             // Update match count
+             await update(ref(db, 'users/'+currentUser.uid), {deposit:d, winning:w});
+             for(const item of names) {
+                 await push(ref(db, 'match_participants/'+currentJoinId), {
+                     ign:item.ign, joinedBy:currentUser.uid, email:currentUser.email || '', slotNo:item.slotNo, kills:0, win:0
+                 });
+             }
              const mRef = ref(db, 'matches/'+key);
              const snap = await get(mRef);
-             const cur = (snap.val() && snap.val().joined) ? snap.val().joined : 0;
-             await update(mRef, {joined: cur + count});
-             
-             // Log Transaction
+             const cur = (snap.val() && snap.val().joined) ? Number(snap.val().joined) : 0;
+             await update(mRef, {joined:cur + names.length});
              const tid = push(ref(db, 'transactions/'+currentUser.uid)).key;
              await set(ref(db, 'transactions/'+currentUser.uid+'/'+tid), {
-                 type: 'Match Join', amount: total, method: 'Wallet', status: 'Success', date: new Date().toLocaleString()
+                 type:'Match Join', amount:total, method:'Wallet', status:'Success', matchId:currentJoinId,
+                 matchTitle:currentJoinMatch?.title || '', slots:names.map(x=>x.slotNo), email:currentUser.email || '', date:new Date().toLocaleString()
              });
-             
-             // Immediate Local Update for UI responsiveness
-             if(!userJoinedMatches.includes(currentJoinId)) {
-                 userJoinedMatches.push(currentJoinId);
-             }
+             if(!userJoinedMatches.includes(currentJoinId)) userJoinedMatches.push(currentJoinId);
              filterMatchTab(currentMatchFilter);
-             
              toggleLoader(false);
-             Swal.fire({
-                 icon: 'success',
-                 title: 'Joined!',
-                 text: 'You have successfully joined the match.'
-             }).then(() => {
-                 closeJoinPage();
-             });
-             
-         } catch(e) { 
+             Swal.fire({icon:'success',title:'Joined!',text:`Successfully booked slot(s): ${names.map(x=>x.slotNo).join(', ')}.`}).then(()=>closeJoinPage());
+         } catch(e) {
+             // Release any seats reserved by this attempt if the booking could not finish.
+             for(const slotNo of reserved) {
+                 try {
+                     const slotRef = ref(db, `match_slots/${currentJoinId}/${slotNo}`);
+                     const snap = await get(slotRef);
+                     if(snap.exists() && snap.val().uid === currentUser.uid) await remove(slotRef);
+                 } catch(_) {}
+             }
              toggleLoader(false);
-             alert(e.message); 
+             Swal.fire('Booking failed', e.message || 'Please try again.', 'error');
          }
     }
 
@@ -3233,4 +3188,4 @@
     }
 </script>;
 </body>
-</html>
+    </html>
